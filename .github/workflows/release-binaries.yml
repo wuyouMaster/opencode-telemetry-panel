@@ -9,7 +9,28 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check package and cargo versions match tag
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          CARGO_VERSION=$(node -e "const fs=require('fs'); const match=fs.readFileSync('src-tauri/Cargo.toml','utf8').match(/^version\s*=\s*\"([^\"]+)\"/m); if(!match) process.exit(1); console.log(match[1])")
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$PACKAGE_VERSION" != "$TAG" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version ${PACKAGE_VERSION}"
+            exit 1
+          fi
+          if [ "$CARGO_VERSION" != "$TAG" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match Cargo version ${CARGO_VERSION}"
+            exit 1
+          fi
+
   build:
+    needs: validate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -63,7 +84,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [validate, build]
     runs-on: ubuntu-latest
 
     steps:
@@ -73,15 +94,6 @@ jobs:
         with:
           path: release-artifacts
           merge-multiple: true
-
-      - name: Check version matches tag
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          TAG="${GITHUB_REF_NAME#v}"
-          if [ "$VERSION" != "$TAG" ]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match package version ${VERSION}"
-            exit 1
-          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -93,3 +105,40 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-artifacts/*
+
+  publish_npm:
+    needs: [validate, release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - name: Install dependencies
+        run: bun install
+        env:
+          OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD: "1"
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Verify publish contents
+        run: npm pack --dry-run
+
+      - name: Verify npm auth
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
