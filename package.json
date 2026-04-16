@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "@opencode-ai/telemetry-panel",
+  "private": false,
+  "description": "OpenCode telemetry panel plugin with a companion Tauri binary",
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.3.11",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wuyouMaster/opencode-telemetry-panel.git"
+  },
+  "homepage": "https://github.com/wuyouMaster/opencode-telemetry-panel",
+  "bugs": {
+    "url": "https://github.com/wuyouMaster/opencode-telemetry-panel/issues"
+  },
+  "main": "./plugin/opencode-telemetry-panel.ts",
+  "exports": {
+    ".": "./plugin/opencode-telemetry-panel.ts",
+    "./server": "./plugin/opencode-telemetry-panel.ts"
+  },
+  "files": [
+    "plugin/opencode-telemetry-panel.ts",
+    "scripts/postinstall.mjs",
+    "README.md",
+    "README_CN.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:exe": "tauri build --no-bundle",
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "tauri": "tauri"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "solid-js": "1.9.10"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/bun": "1.3.11",
+    "typescript": "5.8.2",
+    "vite": "7.1.4",
+    "vite-plugin-solid": "2.11.10"
+  }
+}
