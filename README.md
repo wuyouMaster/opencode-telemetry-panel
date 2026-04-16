@@ -36,6 +36,7 @@ The install step runs `postinstall` and downloads the matching binary into `~/.o
 
 - `OPENCODE_TELEMETRY_PANEL_REPO` overrides the GitHub repo slug used for binary downloads.
 - `OPENCODE_TELEMETRY_PANEL_BIN` forces a custom binary path.
+- `OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD=1` disables binary download during CI installs.
 
 ## Supported Platforms
 

@@ -36,6 +36,7 @@ npm i @opencode-ai/telemetry-panel
 
 - `OPENCODE_TELEMETRY_PANEL_REPO` 覆盖下载二进制时使用的 GitHub 仓库地址。
 - `OPENCODE_TELEMETRY_PANEL_BIN` 手动指定可执行文件路径。
+- `OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD=1` 可在 CI 安装时跳过二进制下载。
 
 ## 支持平台
 

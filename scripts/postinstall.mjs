@@ -11,6 +11,10 @@ const version = packageJson.version
 const repo = resolveRepo(packageJson)
 const asset = resolveAsset()
 
+if (process.env.OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD === "1") {
+  process.exit(0)
+}
+
 if (!asset) {
   console.warn("[opencode-telemetry-panel] skipping binary download on unsupported platform")
   process.exit(0)

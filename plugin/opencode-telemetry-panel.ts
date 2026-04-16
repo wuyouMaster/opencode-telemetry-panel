@@ -1,6 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { homedir } from "node:os"
 
 type SessionStatusEvent = {
@@ -94,9 +94,9 @@ async function append(record: Record<string, unknown>) {
 function launchPanel() {
   if (panelLaunched) return
 
-  const executable = [process.env.OPENCODE_TELEMETRY_PANEL_BIN, executablePath].find(
-    (value): value is string => Boolean(value) && existsSync(value),
-  )
+  const executable = [process.env.OPENCODE_TELEMETRY_PANEL_BIN, executablePath]
+    .filter((value): value is string => typeof value === "string")
+    .find((value) => existsSync(value))
 
   if (!executable) return
 
@@ -185,8 +185,8 @@ export const TelemetryPanelPlugin: Plugin = async () => {
           recordFromPending(
             next,
             event.properties.info.time.completed,
-            !event.properties.info.error,
-            event.properties.info.error ? compactError(event.properties.info.error) : undefined,
+            !event.properties.info.time.error,
+            event.properties.info.time.error ? compactError(event.properties.info.time.error) : undefined,
           ),
         ).catch(() => undefined)
         pending.delete(requestKey)

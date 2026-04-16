@@ -17,13 +17,16 @@ jobs:
         include:
           - os: windows-latest
             artifact: opencode-telemetry-panel-windows-x64.exe
-            suffix: .exe
+            source: OpenCodeTelemetryPanel.exe
+            fallback_source: opencode-telemetry-panel.exe
           - os: macos-15-intel
             artifact: opencode-telemetry-panel-macos-x64
-            suffix: ""
+            source: OpenCodeTelemetryPanel
+            fallback_source: opencode-telemetry-panel
           - os: macos-15
             artifact: opencode-telemetry-panel-macos-arm64
-            suffix: ""
+            source: OpenCodeTelemetryPanel
+            fallback_source: opencode-telemetry-panel
 
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +39,8 @@ jobs:
 
       - name: Install dependencies
         run: bun install
+        env:
+          OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD: "1"
 
       - name: Build executable
         run: bun run build:exe
@@ -44,10 +49,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          if [ -f "src-tauri/target/release/OpenCodeTelemetryPanel${{ matrix.suffix }}" ]; then
-            cp "src-tauri/target/release/OpenCodeTelemetryPanel${{ matrix.suffix }}" "release/${{ matrix.artifact }}"
+          if [ -f "src-tauri/target/release/${{ matrix.source }}" ]; then
+            cp "src-tauri/target/release/${{ matrix.source }}" "release/${{ matrix.artifact }}"
           else
-            cp "src-tauri/target/release/opencode-telemetry-panel${{ matrix.suffix }}" "release/${{ matrix.artifact }}"
+            cp "src-tauri/target/release/${{ matrix.fallback_source }}" "release/${{ matrix.artifact }}"
           fi
 
       - name: Upload executable
