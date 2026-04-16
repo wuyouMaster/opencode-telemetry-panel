@@ -3,7 +3,7 @@
   "name": "@wuyouMaster/opencode-telemetry-panel",
   "private": false,
   "description": "OpenCode telemetry panel plugin with a companion Tauri binary",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "type": "module",
   "packageManager": "bun@1.3.11",
   "repository": {
