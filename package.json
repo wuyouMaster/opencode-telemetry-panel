@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/telemetry-panel",
+  "name": "@wuyouMaster/opencode-telemetry-panel",
   "private": false,
   "description": "OpenCode telemetry panel plugin with a companion Tauri binary",
   "version": "0.0.4",
