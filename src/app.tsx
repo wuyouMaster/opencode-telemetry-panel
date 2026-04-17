@@ -182,6 +182,9 @@ function FilterBar(props: {
     return `${value} · ${formatNumber(option.count)}`
   }
 
+  const currentValue = () => (props.scope === "session" ? props.sessionValue : props.modelValue)
+  const currentOptions = () => (props.scope === "session" ? props.sessionOptions : props.modelOptions)
+
   const scopeSummary = () => {
     if (props.scope === "all") return props.copy.allView
     if (props.scope === "session")
@@ -238,15 +241,18 @@ function FilterBar(props: {
           <span>{props.copy.filterLabel}</span>
           <div class="filter-select-shell">
             <select
-              value={props.scope === "session" ? props.sessionValue : props.modelValue}
-              onInput={(event) => handleFilterValue(event.currentTarget.value)}
+              value={currentValue()}
               onChange={(event) => handleFilterValue(event.currentTarget.value)}
             >
-              <option value="" disabled>
+              <option value="" disabled selected={!currentValue()}>
                 {props.scope === "session" ? props.copy.sessionSelectPlaceholder : props.copy.modelSelectPlaceholder}
               </option>
-              <For each={props.scope === "session" ? props.sessionOptions : props.modelOptions}>
-                {(option) => <option value={option.value}>{formatOption(option, props.scope)}</option>}
+              <For each={currentOptions()}>
+                {(option) => (
+                  <option value={option.value} selected={option.value === currentValue()}>
+                    {formatOption(option, props.scope)}
+                  </option>
+                )}
               </For>
             </select>
           </div>
