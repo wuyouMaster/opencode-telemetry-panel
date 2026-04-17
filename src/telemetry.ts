@@ -14,6 +14,18 @@ export type TelemetryRecord = {
   retries?: number
 }
 
+export type FilterScope = "all" | "session" | "model"
+
+export type SnapshotQuery = {
+  scope: FilterScope
+  value?: string | null
+}
+
+export type FilterOption = {
+  value: string
+  count: number
+}
+
 export type SummaryMetrics = {
   requests: number
   successes: number
@@ -50,13 +62,18 @@ export type DashboardSnapshot = {
   sourcePath: string
   generatedAt: number
   recordCount: number
+  totalRecordCount: number
+  filterScope: FilterScope
+  filterValue?: string | null
+  sessionOptions: FilterOption[]
+  modelOptions: FilterOption[]
   summary: SummaryMetrics
   models: ModelMetrics[]
   recent: RecentRequest[]
 }
 
-export function loadSnapshot() {
-  return invoke<DashboardSnapshot>("snapshot")
+export function loadSnapshot(query: SnapshotQuery) {
+  return invoke<DashboardSnapshot>("snapshot", { query })
 }
 
 export function loadTelemetryPath() {

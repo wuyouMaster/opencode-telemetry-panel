@@ -182,6 +182,157 @@ code {
   gap: 8px;
 }
 
+.filter-bar {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  box-shadow:
+    0 16px 32px rgba(148, 163, 184, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.filter-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-copy {
+  min-width: 0;
+}
+
+.filter-copy span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter-copy strong {
+  display: block;
+  margin-top: 3px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.filter-segments {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.scope-chip {
+  min-width: 70px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.scope-chip:hover {
+  background: rgba(255, 255, 255, 0.82);
+  color: #0f172a;
+}
+
+.scope-chip.active {
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 8px 18px rgba(148, 163, 184, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+.filter-select {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.filter-select span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter-select-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(243, 247, 251, 0.82));
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 8px 18px rgba(148, 163, 184, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.filter-select-shell::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid #94a3b8;
+  border-bottom: 2px solid #94a3b8;
+  transform: translateY(-60%) rotate(45deg);
+  pointer-events: none;
+}
+
+.filter-select-shell:focus-within {
+  border-color: rgba(10, 132, 255, 0.45);
+  box-shadow:
+    0 0 0 3px rgba(10, 132, 255, 0.12),
+    0 8px 18px rgba(148, 163, 184, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.94);
+}
+
+.filter-select-shell select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 18px 0 0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  border: 0;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
 .lang-button {
   min-width: 54px;
   height: 36px;
@@ -694,6 +845,15 @@ code {
 @media (max-width: 440px) {
   .shell {
     border-radius: 28px;
+  }
+
+  .filter-segments {
+    width: 100%;
+  }
+
+  .scope-chip {
+    flex: 1;
+    min-width: 0;
   }
 
   .hero-card h1 {
