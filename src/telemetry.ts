@@ -7,7 +7,7 @@ export type TelemetryRecord = {
   providerId: string
   modelId: string
   startedAt: number
-  firstTokenAt?: number | null
+  firstOutputAt?: number | null
   completedAt?: number | null
   success: boolean
   error?: string | null

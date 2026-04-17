@@ -22,6 +22,7 @@ struct TelemetryRecord {
     provider_id: String,
     model_id: String,
     started_at: u64,
+    first_output_at: Option<u64>,
     first_token_at: Option<u64>,
     completed_at: Option<u64>,
     success: bool,
@@ -255,9 +256,12 @@ fn build_requests(records: &[&TelemetryRecord]) -> Vec<CompletedRequest> {
         .iter()
         .map(|record| {
             let completed_at = record.completed_at.unwrap_or(record.started_at);
-            let first_token_at = record.first_token_at.unwrap_or(completed_at);
-            let wait_ms = first_token_at.saturating_sub(record.started_at) as f64;
-            let network_ms = completed_at.saturating_sub(first_token_at) as f64;
+            let first_output_at = record
+                .first_output_at
+                .or(record.first_token_at)
+                .unwrap_or(completed_at);
+            let wait_ms = first_output_at.saturating_sub(record.started_at) as f64;
+            let network_ms = completed_at.saturating_sub(first_output_at) as f64;
             let latency_ms = completed_at.saturating_sub(record.started_at) as f64;
 
             CompletedRequest {

@@ -13,14 +13,6 @@ type SessionStatusEvent = {
   }
 }
 
-type MessagePartDeltaEvent = {
-  type: "message.part.delta"
-  properties: {
-    sessionID: string
-    messageID: string
-  }
-}
-
 type MessageUpdatedEvent = {
   type: "message.updated"
   properties: {
@@ -30,6 +22,7 @@ type MessageUpdatedEvent = {
       id: string
       providerID: string
       modelID: string
+      summary?: boolean
       time: {
         created: number
         completed?: number | null
@@ -39,15 +32,24 @@ type MessageUpdatedEvent = {
   }
 }
 
-type SessionErrorEvent = {
-  type: "session.error"
+type MessagePartUpdatedEvent = {
+  type: "message.part.updated"
   properties: {
-    sessionID?: string | null
-    error: unknown
+    sessionID: string
+    part: {
+      sessionID: string
+      messageID: string
+      type: string
+      time?: {
+        start?: number
+        end?: number
+      }
+    }
+    time: number
   }
 }
 
-type TelemetryEvent = SessionStatusEvent | MessagePartDeltaEvent | MessageUpdatedEvent | SessionErrorEvent
+type TelemetryEvent = SessionStatusEvent | MessagePartUpdatedEvent | MessageUpdatedEvent
 
 type Plugin = () => Promise<{
   event: (input: { event: TelemetryEvent }) => Promise<void>
@@ -59,7 +61,7 @@ type PendingRequest = {
   providerId: string
   modelId: string
   startedAt: number
-  firstTokenAt?: number
+  firstOutputAt?: number
   retries: number
 }
 
@@ -71,7 +73,7 @@ const executablePath = join(
 )
 const packagePath = new URL("../package.json", import.meta.url)
 const pending = new Map<string, PendingRequest>()
-const firstTokenAt = new Map<string, number>()
+const completedRequests = new Set<string>()
 let binaryReady: Promise<void> | undefined
 let panelLaunched = false
 
@@ -160,7 +162,7 @@ function launchPanel() {
 }
 
 function recordFromPending(pendingRequest: PendingRequest, finishedAt: number, success: boolean, error?: string) {
-  const firstTokenAt = pendingRequest.firstTokenAt ?? finishedAt
+  const firstOutputAt = pendingRequest.firstOutputAt ?? finishedAt
   return {
     kind: "request",
     sessionId: pendingRequest.sessionId,
@@ -168,7 +170,7 @@ function recordFromPending(pendingRequest: PendingRequest, finishedAt: number, s
     providerId: pendingRequest.providerId,
     modelId: pendingRequest.modelId,
     startedAt: pendingRequest.startedAt,
-    firstTokenAt,
+    firstOutputAt,
     completedAt: finishedAt,
     success,
     error: error ?? null,
@@ -183,15 +185,6 @@ export const TelemetryPanelPlugin: Plugin = async () => {
   return {
     event: async ({ event }) => {
       if (event.type === "session.status") {
-        if (event.properties.status.type === "idle") {
-          for (const [requestKey, request] of pending.entries()) {
-            if (request.sessionId !== event.properties.sessionID) continue
-            pending.delete(requestKey)
-            firstTokenAt.delete(requestKey)
-          }
-          return
-        }
-
         if (event.properties.status.type === "retry") {
           for (const request of pending.values()) {
             if (request.sessionId === event.properties.sessionID) request.retries += 1
@@ -201,17 +194,21 @@ export const TelemetryPanelPlugin: Plugin = async () => {
         return
       }
 
-      if (event.type === "message.part.delta") {
-        const requestKey = key(event.properties.sessionID, event.properties.messageID)
-        if (!firstTokenAt.has(requestKey)) firstTokenAt.set(requestKey, Date.now())
-
+      if (event.type === "message.part.updated") {
+        if (event.properties.part.type !== "text") return
+        const requestKey = key(event.properties.sessionID, event.properties.part.messageID)
         const request = pending.get(requestKey)
-        if (request && request.firstTokenAt === undefined) request.firstTokenAt = firstTokenAt.get(requestKey)
+        if (request && request.firstOutputAt === undefined)
+          request.firstOutputAt = event.properties.part.time?.start ?? event.properties.time
         return
       }
 
       if (event.type === "message.updated") {
         if (event.properties.info.role !== "assistant") return
+        if (event.properties.info.summary) {
+          pending.delete(key(event.properties.sessionID, event.properties.info.id))
+          return
+        }
 
         const requestKey = key(event.properties.sessionID, event.properties.info.id)
         const existing = pending.get(requestKey)
@@ -226,11 +223,13 @@ export const TelemetryPanelPlugin: Plugin = async () => {
             retries: 0,
           } satisfies PendingRequest)
 
-        if (next.firstTokenAt === undefined) next.firstTokenAt = firstTokenAt.get(requestKey)
-
+        next.startedAt = Math.min(next.startedAt, event.properties.info.time.created)
+        next.providerId = event.properties.info.providerID
+        next.modelId = event.properties.info.modelID
         if (!existing) pending.set(requestKey, next)
 
         if (!event.properties.info.time.completed) return
+        if (completedRequests.has(requestKey)) return
 
         await append(
           recordFromPending(
@@ -240,25 +239,8 @@ export const TelemetryPanelPlugin: Plugin = async () => {
             event.properties.info.time.error ? compactError(event.properties.info.time.error) : undefined,
           ),
         ).catch(() => undefined)
+        completedRequests.add(requestKey)
         pending.delete(requestKey)
-        firstTokenAt.delete(requestKey)
-        return
-      }
-
-      if (event.type === "session.error") {
-        const sessionId = event.properties.sessionID
-        if (!sessionId) return
-
-        const requests = [...pending.values()].filter((request) => request.sessionId === sessionId)
-        const request = requests.sort((left, right) => right.startedAt - left.startedAt)[0]
-        if (!request) return
-
-        await append(recordFromPending(request, Date.now(), false, compactError(event.properties.error))).catch(
-          () => undefined,
-        )
-        const requestKey = key(request.sessionId, request.messageId)
-        pending.delete(requestKey)
-        firstTokenAt.delete(requestKey)
       }
     },
   }
