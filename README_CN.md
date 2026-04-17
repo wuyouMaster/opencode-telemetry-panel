@@ -5,6 +5,8 @@ OpenCode 监控插件 + Tauri 浮窗面板。
 English: [README.md](./README.md)
 
 ![OpenCode Telemetry Panel 首页界面](./PixPin_2026-04-17_12-24-34.png)
+![OpenCode Telemetry Panel example1](./Weixin%20Image_20260417142221_3069_1358.png)
+![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
 ## Change Log
 

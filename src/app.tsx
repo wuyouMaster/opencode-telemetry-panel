@@ -189,6 +189,14 @@ function FilterBar(props: {
     return props.modelValue || props.copy.modelSelectPlaceholder
   }
 
+  const handleFilterValue = (value: string) => {
+    if (props.scope === "session") {
+      props.onSessionChange(value)
+      return
+    }
+    props.onModelChange(value)
+  }
+
   return (
     <section class="filter-bar">
       <div class="filter-head">
@@ -231,11 +239,8 @@ function FilterBar(props: {
           <div class="filter-select-shell">
             <select
               value={props.scope === "session" ? props.sessionValue : props.modelValue}
-              onChange={(event) =>
-                props.scope === "session"
-                  ? props.onSessionChange(event.currentTarget.value)
-                  : props.onModelChange(event.currentTarget.value)
-              }
+              onInput={(event) => handleFilterValue(event.currentTarget.value)}
+              onChange={(event) => handleFilterValue(event.currentTarget.value)}
             >
               <option value="" disabled>
                 {props.scope === "session" ? props.copy.sessionSelectPlaceholder : props.copy.modelSelectPlaceholder}
@@ -357,7 +362,12 @@ export function App() {
       scope() === "session" ? sessionValue() || undefined : scope() === "model" ? modelValue() || undefined : undefined,
   }))
 
-  const [snapshot, { refetch }] = createResource(query, loadSnapshot)
+  const queryKey = createMemo(() => {
+    const next = query()
+    return [next.scope, next.value ?? ""].join(":")
+  })
+
+  const [snapshot, { refetch }] = createResource(queryKey, () => loadSnapshot(query()))
   const [telemetryPath] = createResource(loadTelemetryPath)
 
   onMount(() => {
