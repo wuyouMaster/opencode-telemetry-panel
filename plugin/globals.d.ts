@@ -1,5 +1,6 @@
 declare const process: {
   platform: string
+  arch: string
   env: Record<string, string | undefined>
 }
 

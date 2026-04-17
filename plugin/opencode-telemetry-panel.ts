@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from "node:fs/promises"
+import { appendFile, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { homedir } from "node:os"
@@ -69,8 +69,10 @@ const executablePath = join(
   root,
   process.platform === "win32" ? "OpenCodeTelemetryPanel.exe" : "OpenCodeTelemetryPanel",
 )
+const packagePath = new URL("../package.json", import.meta.url)
 const pending = new Map<string, PendingRequest>()
 const firstTokenAt = new Map<string, number>()
+let binaryReady: Promise<void> | undefined
 let panelLaunched = false
 
 function key(sessionId: string, messageId: string) {
@@ -89,6 +91,54 @@ function compactError(error: unknown) {
 async function append(record: Record<string, unknown>) {
   await mkdir(dirname(file), { recursive: true })
   await appendFile(file, `${JSON.stringify(record)}\n`)
+}
+
+function binaryAsset() {
+  if (process.platform === "win32" && process.arch === "x64") return "opencode-telemetry-panel-windows-x64.exe"
+  if (process.platform === "darwin" && process.arch === "arm64") return "opencode-telemetry-panel-macos-arm64"
+  if (process.platform === "darwin" && process.arch === "x64") return "opencode-telemetry-panel-macos-x64"
+}
+
+function binaryRepo() {
+  const raw = process.env.OPENCODE_TELEMETRY_PANEL_REPO?.trim() || "wuyouMaster/opencode-telemetry-panel"
+  return raw
+    .replace(/^git\+/, "")
+    .replace(/^https?:\/\/github\.com\//, "")
+    .replace(/^git@github\.com:/, "")
+    .replace(/\.git$/, "")
+}
+
+async function binaryVersion() {
+  const json = JSON.parse(await readFile(packagePath, "utf8")) as { version?: unknown }
+  if (typeof json.version !== "string" || !json.version.trim()) return
+  return json.version.trim()
+}
+
+async function ensureBinary() {
+  if (binaryReady) return binaryReady
+
+  binaryReady = (async () => {
+    if (process.env.OPENCODE_TELEMETRY_PANEL_SKIP_DOWNLOAD === "1") return
+    if ([process.env.OPENCODE_TELEMETRY_PANEL_BIN, executablePath].some((value) => value && existsSync(value))) return
+
+    const asset = binaryAsset()
+    const version = await binaryVersion().catch(() => undefined)
+    if (!asset || !version) return
+
+    await mkdir(root, { recursive: true })
+    const response = await fetch(`https://github.com/${binaryRepo()}/releases/download/v${version}/${asset}`).catch(
+      () => undefined,
+    )
+    if (!response?.ok) return
+
+    const tempPath = `${executablePath}.download`
+    await writeFile(tempPath, Buffer.from(await response.arrayBuffer()))
+    if (process.platform !== "win32") await chmod(tempPath, 0o755)
+    await rm(executablePath, { force: true }).catch(() => undefined)
+    await rename(tempPath, executablePath)
+  })().catch(() => undefined)
+
+  return binaryReady
 }
 
 function launchPanel() {
@@ -127,6 +177,7 @@ function recordFromPending(pendingRequest: PendingRequest, finishedAt: number, s
 }
 
 export const TelemetryPanelPlugin: Plugin = async () => {
+  await ensureBinary()
   launchPanel()
 
   return {
