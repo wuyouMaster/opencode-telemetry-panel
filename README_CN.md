@@ -8,6 +8,9 @@ English: [README.md](./README.md)
 ![OpenCode Telemetry Panel example1](./Weixin%20Image_20260417142221_3069_1358.png)
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
+## latest version: 
+- v0.1.1
+
 ## Change Log
 
 `v0.0.7` 到 `72761b9`（`v0.0.8`）之间的核心改动：

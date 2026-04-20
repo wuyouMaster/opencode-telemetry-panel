@@ -7,6 +7,10 @@ OpenCode telemetry plugin plus a Tauri floating panel.
 ![OpenCode Telemetry Panel home](./PixPin_2026-04-17_12-24-34.png)
 ![OpenCode Telemetry Panel example1](./Weixin%20Image_20260417142221_3069_1358.png)
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
+
+## latest version: 
+- v0.1.1
+
 ## Changelog
 
 Core changes from `v0.0.7` to `72761b9` (`v0.0.8`):
