@@ -1,7 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { createEffect, createMemo, createResource, createSignal, For, Show, onCleanup, onMount } from "solid-js"
 import { formatMs, formatNumber, formatPercent, formatTimestamp } from "./format"
-import type { FilterOption, FilterScope, ModelMetrics, RecentRequest, SnapshotQuery } from "./telemetry"
+import type { FailureBreakdown, FilterOption, FilterScope, ModelMetrics, RecentRequest, SnapshotQuery } from "./telemetry"
 import { loadSnapshot, loadTelemetryPath } from "./telemetry"
 
 const panelCopy = {
@@ -30,11 +30,18 @@ const panelCopy = {
         : `${formatNumber(shown)} shown / ${formatNumber(total)} total`,
     successDetail: (successes: number, failures: number) =>
       `${formatNumber(successes)} ok · ${formatNumber(failures)} fail`,
-    avgWait: "First output",
+    avgWait: "Wait time",
     toFirstToken: "from request to first output",
-    avgStream: "Post-output",
-    firstTokenToFinish: "first output to finish",
+    avgStream: "Text stream",
+    streamDetail: "model text output",
+    avgReasoning: "Reasoning",
+    reasoningDetail: "thinking time",
+    avgTool: "Tool time",
+    toolDetail: "tool execution",
+    avgPostProcess: "Post-processing",
+    postProcessDetail: "after text, reasoning, and tools",
     avgTotal: "Total latency",
+    totalDetail: "request to completion",
     p95Short: "p95",
     retries: "Retries",
     retryEventsObserved: "retry events observed",
@@ -45,8 +52,11 @@ const panelCopy = {
     noFinishedRequests: "No finished requests yet.",
     requestsAndRetries: (requests: number, retries: number) =>
       `${formatNumber(requests)} requests · ${formatNumber(retries)} retries`,
-    wait: "First output",
-    stream: "Post-output",
+    wait: "Wait",
+    stream: "Stream",
+    reasoning: "Reasoning",
+    tool: "Tool",
+    postProcess: "Post",
     total: "Total",
     ok: "ok",
     error: "error",
@@ -57,9 +67,15 @@ const panelCopy = {
     filterAll: "All",
     filterSession: "Session",
     filterModel: "Model",
+    filterFailure: "Failure",
     sessionSelectPlaceholder: "Choose a session",
     modelSelectPlaceholder: "Choose a model",
+    failureSelectPlaceholder: "Choose a failure class",
     allView: "Global view",
+    failureReasons: "Failure reasons",
+    failureReasonsDescription: "Breakdown of failed requests in the current view.",
+    noFailures: "No failures in the current view.",
+    failureRequests: "requests",
   },
   zh: {
     toggleLabel: "EN",
@@ -85,11 +101,18 @@ const panelCopy = {
         : `已显示 ${formatNumber(shown)} / 共 ${formatNumber(total)} 条`,
     successDetail: (successes: number, failures: number) =>
       `${formatNumber(successes)} 次成功 · ${formatNumber(failures)} 次失败`,
-    avgWait: "首个输出",
+    avgWait: "等待时长",
     toFirstToken: "从请求到首个输出",
-    avgStream: "后续耗时",
-    firstTokenToFinish: "从首个输出到结束",
+    avgStream: "文本流",
+    streamDetail: "模型正文输出",
+    avgReasoning: "思考",
+    reasoningDetail: "推理过程",
+    avgTool: "工具耗时",
+    toolDetail: "工具执行时间",
+    avgPostProcess: "后处理",
+    postProcessDetail: "文本、思考和工具之后",
     avgTotal: "总耗时",
+    totalDetail: "从请求到完成",
     p95Short: "P95",
     retries: "重试总数",
     retryEventsObserved: "本次会话记录到的重试次数",
@@ -100,9 +123,12 @@ const panelCopy = {
     noFinishedRequests: "暂时还没有已完成的请求。",
     requestsAndRetries: (requests: number, retries: number) =>
       `${formatNumber(requests)} 次调用 · ${formatNumber(retries)} 次重试`,
-    wait: "首个输出",
-    stream: "后续耗时",
-    total: "总耗时",
+    wait: "等待",
+    stream: "流式",
+    reasoning: "思考",
+    tool: "工具",
+    postProcess: "后处理",
+    total: "总计",
     ok: "成功",
     error: "失败",
     retry: "重试",
@@ -112,9 +138,15 @@ const panelCopy = {
     filterAll: "全部",
     filterSession: "会话",
     filterModel: "模型",
+    filterFailure: "失败",
     sessionSelectPlaceholder: "选择会话",
     modelSelectPlaceholder: "选择模型",
+    failureSelectPlaceholder: "选择失败类型",
     allView: "全局视图",
+    failureReasons: "失败原因",
+    failureReasonsDescription: "展示当前视图中失败请求的构成。",
+    noFailures: "当前视图中没有失败请求。",
+    failureRequests: "次请求",
   },
 } as const
 
@@ -171,30 +203,54 @@ function FilterBar(props: {
   scope: FilterScope
   sessionValue: string
   modelValue: string
+  failureValue: string
   sessionOptions: FilterOption[]
   modelOptions: FilterOption[]
+  failureOptions: FilterOption[]
   onScopeChange: (scope: FilterScope) => void
   onSessionChange: (value: string) => void
   onModelChange: (value: string) => void
+  onFailureChange: (value: string) => void
 }) {
   const formatOption = (option: FilterOption, scope: FilterScope) => {
-    const value = scope === "session" ? shortValue(option.value) : option.value
+    const value =
+      scope === "session"
+        ? shortValue(option.value)
+        : scope === "failure"
+          ? humanizeFailureType(option.value)
+          : option.value
     return `${value} · ${formatNumber(option.count)}`
   }
 
-  const currentValue = () => (props.scope === "session" ? props.sessionValue : props.modelValue)
-  const currentOptions = () => (props.scope === "session" ? props.sessionOptions : props.modelOptions)
+  const currentValue = () =>
+    props.scope === "session"
+      ? props.sessionValue
+      : props.scope === "failure"
+        ? props.failureValue
+        : props.modelValue
+  const currentOptions = () =>
+    props.scope === "session"
+      ? props.sessionOptions
+      : props.scope === "failure"
+        ? props.failureOptions
+        : props.modelOptions
 
   const scopeSummary = () => {
     if (props.scope === "all") return props.copy.allView
     if (props.scope === "session")
       return props.sessionValue ? shortValue(props.sessionValue) : props.copy.sessionSelectPlaceholder
+    if (props.scope === "failure")
+      return props.failureValue ? humanizeFailureType(props.failureValue) : props.copy.failureSelectPlaceholder
     return props.modelValue || props.copy.modelSelectPlaceholder
   }
 
   const handleFilterValue = (value: string) => {
     if (props.scope === "session") {
       props.onSessionChange(value)
+      return
+    }
+    if (props.scope === "failure") {
+      props.onFailureChange(value)
       return
     }
     props.onModelChange(value)
@@ -233,6 +289,14 @@ function FilterBar(props: {
           >
             {props.copy.filterModel}
           </button>
+          <button
+            type="button"
+            class={`scope-chip ${props.scope === "failure" ? "active" : ""}`}
+            aria-pressed={props.scope === "failure"}
+            onClick={() => props.onScopeChange("failure")}
+          >
+            {props.copy.filterFailure}
+          </button>
         </div>
       </div>
 
@@ -245,7 +309,11 @@ function FilterBar(props: {
               onChange={(event) => handleFilterValue(event.currentTarget.value)}
             >
               <option value="" disabled selected={!currentValue()}>
-                {props.scope === "session" ? props.copy.sessionSelectPlaceholder : props.copy.modelSelectPlaceholder}
+                {props.scope === "session"
+                  ? props.copy.sessionSelectPlaceholder
+                  : props.scope === "failure"
+                    ? props.copy.failureSelectPlaceholder
+                    : props.copy.modelSelectPlaceholder}
               </option>
               <For each={currentOptions()}>
                 {(option) => (
@@ -288,17 +356,71 @@ function ModelCard(props: { model: ModelMetrics; copy: PanelCopy }) {
         </div>
         <div>
           <span>{props.copy.stream}</span>
-          <strong>{formatMs(props.model.avgNetworkMs)}</strong>
+          <strong>{formatMs(props.model.avgStreamMs)}</strong>
+        </div>
+        <div>
+          <span>{props.copy.reasoning}</span>
+          <strong>{formatMs(props.model.avgReasoningMs)}</strong>
+        </div>
+        <div>
+          <span>{props.copy.tool}</span>
+          <strong>{formatMs(props.model.avgToolMs)}</strong>
+        </div>
+        <div>
+          <span>{props.copy.postProcess}</span>
+          <strong>{formatMs(props.model.avgPostProcessMs)}</strong>
         </div>
         <div>
           <span>{props.copy.total}</span>
           <strong>{formatMs(props.model.avgLatencyMs)}</strong>
         </div>
         <div>
-          <span>P95</span>
+          <span>{props.copy.p95Short}</span>
           <strong>{formatMs(props.model.p95LatencyMs)}</strong>
         </div>
       </div>
+    </section>
+  )
+}
+
+function FailureBreakdownSection(props: { items: FailureBreakdown[]; copy: PanelCopy }) {
+  const totalFailures = () => props.items.reduce((sum, item) => sum + item.count, 0)
+
+  return (
+    <section class="panel-section">
+      <div class="section-head">
+        <div>
+          <h2>{props.copy.failureReasons}</h2>
+          <p>{props.copy.failureReasonsDescription}</p>
+        </div>
+        <span class="section-badge">{formatNumber(totalFailures())}</span>
+      </div>
+
+      <Show when={props.items.length > 0} fallback={<div class="empty-inline">{props.copy.noFailures}</div>}>
+        <div class="failure-list">
+          <For each={props.items}>
+            {(item) => {
+              const width = `${Math.min(100, Math.max(0, item.share))}%`
+              return (
+                <article class="failure-card">
+                  <div class="failure-head">
+                    <div>
+                      <div class="failure-type">{humanizeFailureType(item.errorType)}</div>
+                      <div class="failure-meta">
+                        {formatNumber(item.count)} {props.copy.failureRequests}
+                      </div>
+                    </div>
+                    <div class="failure-share">{formatPercent(item.share)}</div>
+                  </div>
+                  <div class="failure-bar">
+                    <div class="failure-bar-fill" style={{ width }} />
+                  </div>
+                </article>
+              )
+            }}
+          </For>
+        </div>
+      </Show>
     </section>
   )
 }
@@ -320,7 +442,16 @@ function RecentItem(props: { item: RecentRequest; copy: PanelCopy }) {
           {props.copy.wait} {formatMs(props.item.waitMs)}
         </span>
         <span class="recent-pill">
-          {props.copy.stream} {formatMs(props.item.networkMs)}
+          {props.copy.stream} {formatMs(props.item.streamMs)}
+        </span>
+        <span class="recent-pill">
+          {props.copy.reasoning} {formatMs(props.item.reasoningMs)}
+        </span>
+        <span class="recent-pill">
+          {props.copy.tool} {formatMs(props.item.toolMs)}
+        </span>
+        <span class="recent-pill">
+          {props.copy.postProcess} {formatMs(props.item.postProcessMs)}
         </span>
         <span class="recent-pill">
           {props.copy.total} {formatMs(props.item.latencyMs)}
@@ -329,6 +460,9 @@ function RecentItem(props: { item: RecentRequest; copy: PanelCopy }) {
           <span class="recent-pill recent-pill-warm">
             {props.copy.retry} {formatNumber(props.item.retries)}
           </span>
+        </Show>
+        <Show when={!props.item.success && props.item.errorType}>
+          <span class="recent-pill recent-pill-failure-type">{humanizeFailureType(props.item.errorType ?? "unknown_error")}</span>
         </Show>
       </div>
       <Show when={!props.item.success && props.item.error}>
@@ -355,17 +489,31 @@ function shortValue(value: string) {
   return `${value.slice(0, 6)}…${value.slice(-4)}`
 }
 
+function humanizeFailureType(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+    .trim()
+}
+
 export function App() {
   const [locale, setLocale] = createSignal<Locale>("en")
   const [scope, setScope] = createSignal<FilterScope>("all")
   const [sessionValue, setSessionValue] = createSignal("")
   const [modelValue, setModelValue] = createSignal("")
+  const [failureValue, setFailureValue] = createSignal("")
   const [ready, setReady] = createSignal(false)
 
   const query = createMemo<SnapshotQuery>(() => ({
     scope: scope(),
     value:
-      scope() === "session" ? sessionValue() || undefined : scope() === "model" ? modelValue() || undefined : undefined,
+      scope() === "session"
+        ? sessionValue() || undefined
+        : scope() === "model"
+          ? modelValue() || undefined
+          : scope() === "failure"
+            ? failureValue() || undefined
+            : undefined,
   }))
 
   const queryKey = createMemo(() => {
@@ -389,6 +537,9 @@ export function App() {
     const storedModel = window.localStorage.getItem("opencode-telemetry-model")
     if (storedModel) setModelValue(storedModel)
 
+    const storedFailure = window.localStorage.getItem("opencode-telemetry-failure")
+    if (storedFailure) setFailureValue(storedFailure)
+
     setReady(true)
 
     const timer = window.setInterval(() => void refetch(), 1200)
@@ -400,9 +551,11 @@ export function App() {
   const recordCount = createMemo(() => snapshot()?.recordCount ?? 0)
   const sessionOptions = createMemo(() => snapshot()?.sessionOptions ?? [])
   const modelOptions = createMemo(() => snapshot()?.modelOptions ?? [])
+  const failureOptions = createMemo(() => snapshot()?.failureOptions ?? [])
   const models = createMemo(() => snapshot()?.models ?? [])
   const recent = createMemo(() => snapshot()?.recent ?? [])
   const summary = createMemo(() => snapshot()?.summary)
+  const failureBreakdown = createMemo(() => snapshot()?.failureBreakdown ?? [])
   const activeSummary = createMemo(() => {
     const value = summary()
     return value && value.requests > 0 ? value : undefined
@@ -410,6 +563,7 @@ export function App() {
   const scopeLabel = createMemo(() => {
     if (scope() === "session") return copy().filterSession
     if (scope() === "model") return copy().filterModel
+    if (scope() === "failure") return copy().filterFailure
     return copy().filterAll
   })
 
@@ -440,6 +594,14 @@ export function App() {
   })
 
   createEffect(() => {
+    if (scope() !== "failure") return
+    const options = failureOptions()
+    const current = failureValue()
+    if (options.length && (!current || !options.some((option) => option.value === current)))
+      setFailureValue(options[0].value)
+  })
+
+  createEffect(() => {
     if (!ready()) return
     window.localStorage.setItem("opencode-telemetry-session", sessionValue())
   })
@@ -447,6 +609,11 @@ export function App() {
   createEffect(() => {
     if (!ready()) return
     window.localStorage.setItem("opencode-telemetry-model", modelValue())
+  })
+
+  createEffect(() => {
+    if (!ready()) return
+    window.localStorage.setItem("opencode-telemetry-failure", failureValue())
   })
 
   const refresh = () => void refetch()
@@ -464,6 +631,7 @@ export function App() {
     setScope(nextScope)
     if (nextScope === "session" && !sessionValue()) setSessionValue(sessionOptions()[0]?.value ?? "")
     if (nextScope === "model" && !modelValue()) setModelValue(modelOptions()[0]?.value ?? "")
+    if (nextScope === "failure" && !failureValue()) setFailureValue(failureOptions()[0]?.value ?? "")
   }
   const toggleLocale = () => {
     setLocale((current) => (current === "en" ? "zh" : "en"))
@@ -502,11 +670,14 @@ export function App() {
           scope={scope()}
           sessionValue={sessionValue()}
           modelValue={modelValue()}
+          failureValue={failureValue()}
           sessionOptions={sessionOptions()}
           modelOptions={modelOptions()}
+          failureOptions={failureOptions()}
           onScopeChange={handleScopeChange}
           onSessionChange={setSessionValue}
           onModelChange={setModelValue}
+          onFailureChange={setFailureValue}
         />
 
         <Show
@@ -565,9 +736,27 @@ export function App() {
                 />
                 <MetricCard
                   label={copy().avgStream}
-                  value={formatMs(data().avgNetworkMs)}
-                  detail={copy().firstTokenToFinish}
+                  value={formatMs(data().avgStreamMs)}
+                  detail={copy().streamDetail}
                   accent="#f59e0b"
+                />
+                <MetricCard
+                  label={copy().avgReasoning}
+                  value={formatMs(data().avgReasoningMs)}
+                  detail={copy().reasoningDetail}
+                  accent="#ef4444"
+                />
+                <MetricCard
+                  label={copy().avgTool}
+                  value={formatMs(data().avgToolMs)}
+                  detail={copy().toolDetail}
+                  accent="#fb7185"
+                />
+                <MetricCard
+                  label={copy().avgPostProcess}
+                  value={formatMs(data().avgPostProcessMs)}
+                  detail={copy().postProcessDetail}
+                  accent="#a855f7"
                 />
                 <MetricCard
                   label={copy().avgTotal}
@@ -582,6 +771,8 @@ export function App() {
                   accent="#eab308"
                 />
               </section>
+
+              <FailureBreakdownSection items={failureBreakdown()} copy={copy()} />
 
               <section class="panel-section">
                 <div class="section-head">

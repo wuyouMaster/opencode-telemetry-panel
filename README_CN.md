@@ -4,14 +4,26 @@ OpenCode 监控插件 + Tauri 浮窗面板。
 
 English: [README.md](./README.md)
 
-![OpenCode Telemetry Panel 首页界面](./PixPin_2026-04-17_12-24-34.png)
-![OpenCode Telemetry Panel example1](./Weixin%20Image_20260417142221_3069_1358.png)
+![OpenCode Telemetry Panel 首页界面](./v0.1.2.1.png)
+![OpenCode Telemetry Panel example1](./v0.1.2.png)
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
 ## latest version: 
-- v0.1.1
+- v0.1.2
 
 ## Change Log
+
+`v0.1.1` 到 `v0.1.2` 之间的核心改动：
+
+- 新增更细的耗时指标，覆盖等待、文本流、思考、工具执行和后处理，并同步到总览、模型和最近记录视图。
+- 增加失败类型分类、失败原因面板和失败筛选维度，方便更快分析错误。
+- 扩展最近记录卡片和模型卡片，让新增指标直接显示在主看板里。
+
+`v0.0.8` 到 `v0.1.1` 之间的核心改动：
+
+- `v0.0.9`：重新梳理 telemetry 指标，改用首个输出时间并避免重复完成记录；补充了教程/引导文档和截图，并修复了最初的筛选交互问题。
+- `v0.1.0`：修复筛选切换 bug，保证范围切换时选中值与快照数据同步。
+- `v0.1.1`：调整浮窗面板的 CSS 和文案，整体更简洁、更精致。
 
 `v0.0.7` 到 `72761b9`（`v0.0.8`）之间的核心改动：
 
@@ -40,7 +52,7 @@ English: [README.md](./README.md)
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.0.8"]
+  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.2"]
 }
 ```
 

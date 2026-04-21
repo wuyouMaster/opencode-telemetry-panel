@@ -9,12 +9,17 @@ export type TelemetryRecord = {
   startedAt: number
   firstOutputAt?: number | null
   completedAt?: number | null
+  streamMs?: number | null
+  reasoningMs?: number | null
+  toolMs?: number | null
+  postProcessMs?: number | null
   success: boolean
   error?: string | null
+  errorType?: string | null
   retries?: number
 }
 
-export type FilterScope = "all" | "session" | "model"
+export type FilterScope = "all" | "session" | "model" | "failure"
 
 export type SnapshotQuery = {
   scope: FilterScope
@@ -34,6 +39,10 @@ export type SummaryMetrics = {
   successRate: number
   avgLatencyMs: number
   avgWaitMs: number
+  avgStreamMs: number
+  avgReasoningMs: number
+  avgToolMs: number
+  avgPostProcessMs: number
   avgNetworkMs: number
   p95LatencyMs: number
 }
@@ -45,13 +54,24 @@ export type ModelMetrics = SummaryMetrics & {
   latestAt: number
 }
 
+export type FailureBreakdown = {
+  errorType: string
+  count: number
+  share: number
+}
+
 export type RecentRequest = {
   key: string
   providerId: string
   modelId: string
   finishedAt: number
   success: boolean
+  errorType?: string | null
   waitMs: number
+  streamMs: number
+  reasoningMs: number
+  toolMs: number
+  postProcessMs: number
   networkMs: number
   latencyMs: number
   retries: number
@@ -67,7 +87,9 @@ export type DashboardSnapshot = {
   filterValue?: string | null
   sessionOptions: FilterOption[]
   modelOptions: FilterOption[]
+  failureOptions: FilterOption[]
   summary: SummaryMetrics
+  failureBreakdown: FailureBreakdown[]
   models: ModelMetrics[]
   recent: RecentRequest[]
 }

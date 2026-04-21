@@ -25,8 +25,13 @@ struct TelemetryRecord {
     first_output_at: Option<u64>,
     first_token_at: Option<u64>,
     completed_at: Option<u64>,
+    stream_ms: Option<f64>,
+    reasoning_ms: Option<f64>,
+    tool_ms: Option<f64>,
+    post_process_ms: Option<f64>,
     success: bool,
     error: Option<String>,
+    error_type: Option<String>,
     retries: Option<u64>,
 }
 
@@ -37,6 +42,7 @@ enum FilterScope {
     All,
     Session,
     Model,
+    Failure,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -63,8 +69,20 @@ struct SummaryMetrics {
     success_rate: f64,
     avg_latency_ms: f64,
     avg_wait_ms: f64,
+    avg_stream_ms: f64,
+    avg_reasoning_ms: f64,
+    avg_tool_ms: f64,
+    avg_post_process_ms: f64,
     avg_network_ms: f64,
     p95_latency_ms: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FailureBreakdown {
+    error_type: String,
+    count: u64,
+    share: f64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -81,6 +99,10 @@ struct ModelMetrics {
     success_rate: f64,
     avg_latency_ms: f64,
     avg_wait_ms: f64,
+    avg_stream_ms: f64,
+    avg_reasoning_ms: f64,
+    avg_tool_ms: f64,
+    avg_post_process_ms: f64,
     avg_network_ms: f64,
     p95_latency_ms: f64,
 }
@@ -93,7 +115,12 @@ struct RecentRequest {
     model_id: String,
     finished_at: u64,
     success: bool,
+    error_type: Option<String>,
     wait_ms: f64,
+    stream_ms: f64,
+    reasoning_ms: f64,
+    tool_ms: f64,
+    post_process_ms: f64,
     network_ms: f64,
     latency_ms: f64,
     retries: u64,
@@ -111,7 +138,9 @@ struct DashboardSnapshot {
     filter_value: Option<String>,
     session_options: Vec<FilterOption>,
     model_options: Vec<FilterOption>,
+    failure_options: Vec<FilterOption>,
     summary: SummaryMetrics,
+    failure_breakdown: Vec<FailureBreakdown>,
     models: Vec<ModelMetrics>,
     recent: Vec<RecentRequest>,
 }
@@ -123,7 +152,12 @@ struct CompletedRequest {
     model_id: String,
     finished_at: u64,
     success: bool,
+    error_type: Option<String>,
     wait_ms: f64,
+    stream_ms: f64,
+    reasoning_ms: f64,
+    tool_ms: f64,
+    post_process_ms: f64,
     network_ms: f64,
     latency_ms: f64,
     retries: u64,
@@ -156,6 +190,116 @@ fn read_records(path: &Path) -> Vec<TelemetryRecord> {
 
 fn record_key(record: &TelemetryRecord) -> String {
     format!("{}/{}", record.provider_id, record.model_id)
+}
+
+fn compute_post_process_ms(
+    record: &TelemetryRecord,
+    completed_at: u64,
+    first_output_at: u64,
+    stream_ms: f64,
+    reasoning_ms: f64,
+    tool_ms: f64,
+) -> f64 {
+    if let Some(post_process_ms) = record.post_process_ms {
+        return post_process_ms;
+    }
+
+    let total_ms = completed_at.saturating_sub(record.started_at) as f64;
+    let wait_ms = first_output_at.saturating_sub(record.started_at) as f64;
+    (total_ms - wait_ms - stream_ms - reasoning_ms - tool_ms).max(0.0)
+}
+
+fn normalize_error_candidate(text: &str) -> String {
+    let mut candidate = text.trim().to_lowercase();
+    candidate = candidate
+        .trim_matches(|c: char| {
+            matches!(
+                c,
+                '`' | '"' | '\'' | '“' | '”' | '‘' | '’' | ':' | '.' | '!' | '?' | '-'
+            )
+        })
+        .trim()
+        .to_string();
+
+    for prefix in [
+        "error:",
+        "error ",
+        "http error:",
+        "http error ",
+        "http:",
+        "http ",
+    ] {
+        if let Some(stripped) = candidate.strip_prefix(prefix) {
+            candidate = stripped.trim().to_string();
+        }
+    }
+
+    candidate
+}
+
+fn matches_business_error_text(text: &str) -> bool {
+    let candidate = normalize_error_candidate(text);
+    if candidate.is_empty() {
+        return false;
+    }
+
+    let patterns = [
+        "404",
+        "404 not found",
+        "not found",
+        "resource not found",
+        "endpoint not found",
+        "page not found",
+        "file not found",
+        "request failed",
+        "failed to fetch",
+        "bad request",
+        "unauthorized",
+        "forbidden",
+        "internal server error",
+        "service unavailable",
+        "gateway timeout",
+        "rate limited",
+        "rate limit exceeded",
+    ];
+
+    patterns.iter().any(|pattern| candidate == *pattern)
+}
+
+fn classify_error_type(record: &TelemetryRecord) -> Option<String> {
+    if record.success {
+        return None;
+    }
+
+    if let Some(error_type) = record
+        .error_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Some(error_type.to_string());
+    }
+
+    let error = record.error.as_deref().unwrap_or("").trim();
+    if error.is_empty() {
+        return Some("unknown_error".to_string());
+    }
+
+    let lower = error.to_lowercase();
+    if matches_business_error_text(&lower) {
+        return Some("business_error".to_string());
+    }
+    if lower.contains("session error") {
+        return Some("session_error".to_string());
+    }
+    if lower.contains("tool error") {
+        return Some("tool_error".to_string());
+    }
+    if lower.contains("message error") {
+        return Some("message_error".to_string());
+    }
+
+    Some("unknown_error".to_string())
 }
 
 fn average(values: &[f64]) -> f64 {
@@ -239,6 +383,35 @@ fn build_model_options(records: &[TelemetryRecord]) -> Vec<FilterOption> {
         .collect()
 }
 
+fn build_failure_options(records: &[TelemetryRecord]) -> Vec<FilterOption> {
+    let mut grouped: HashMap<String, (usize, u64)> = HashMap::new();
+
+    for record in records.iter().filter(|record| !record.success) {
+        let latest = record.completed_at.unwrap_or(record.started_at);
+        let key = classify_error_type(record).unwrap_or_else(|| "unknown_error".to_string());
+        let entry = grouped.entry(key).or_insert((0, latest));
+        entry.0 += 1;
+        if latest > entry.1 {
+            entry.1 = latest;
+        }
+    }
+
+    let mut grouped: Vec<_> = grouped.into_iter().collect();
+    grouped.sort_by(|left, right| {
+        right
+            .1
+             .0
+            .cmp(&left.1 .0)
+            .then_with(|| right.1 .1.cmp(&left.1 .1))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+
+    grouped
+        .into_iter()
+        .map(|(value, (count, _))| FilterOption { value, count })
+        .collect()
+}
+
 fn matches_filter(record: &TelemetryRecord, query: &SnapshotQuery) -> bool {
     let scope = query.scope.unwrap_or_default();
     let value = query.value.as_deref().filter(|value| !value.is_empty());
@@ -247,6 +420,9 @@ fn matches_filter(record: &TelemetryRecord, query: &SnapshotQuery) -> bool {
         (FilterScope::All, _) => true,
         (FilterScope::Session, Some(value)) => record.session_id == value,
         (FilterScope::Model, Some(value)) => record_key(record) == value,
+        (FilterScope::Failure, Some(value)) => {
+            !record.success && classify_error_type(record).as_deref() == Some(value)
+        }
         _ => false,
     }
 }
@@ -261,7 +437,18 @@ fn build_requests(records: &[&TelemetryRecord]) -> Vec<CompletedRequest> {
                 .or(record.first_token_at)
                 .unwrap_or(completed_at);
             let wait_ms = first_output_at.saturating_sub(record.started_at) as f64;
-            let network_ms = completed_at.saturating_sub(first_output_at) as f64;
+            let stream_ms = record.stream_ms.unwrap_or(0.0);
+            let reasoning_ms = record.reasoning_ms.unwrap_or(0.0);
+            let tool_ms = record.tool_ms.unwrap_or(0.0);
+            let post_process_ms = compute_post_process_ms(
+                record,
+                completed_at,
+                first_output_at,
+                stream_ms,
+                reasoning_ms,
+                tool_ms,
+            );
+            let network_ms = post_process_ms;
             let latency_ms = completed_at.saturating_sub(record.started_at) as f64;
 
             CompletedRequest {
@@ -270,7 +457,12 @@ fn build_requests(records: &[&TelemetryRecord]) -> Vec<CompletedRequest> {
                 model_id: record.model_id.clone(),
                 finished_at: completed_at,
                 success: record.success,
+                error_type: classify_error_type(record),
                 wait_ms,
+                stream_ms,
+                reasoning_ms,
+                tool_ms,
+                post_process_ms,
                 network_ms,
                 latency_ms,
                 retries: record.retries.unwrap_or(0),
@@ -283,6 +475,16 @@ fn build_requests(records: &[&TelemetryRecord]) -> Vec<CompletedRequest> {
 fn summarize(requests: &[CompletedRequest]) -> SummaryMetrics {
     let latencies: Vec<f64> = requests.iter().map(|request| request.latency_ms).collect();
     let waits: Vec<f64> = requests.iter().map(|request| request.wait_ms).collect();
+    let streams: Vec<f64> = requests.iter().map(|request| request.stream_ms).collect();
+    let reasonings: Vec<f64> = requests
+        .iter()
+        .map(|request| request.reasoning_ms)
+        .collect();
+    let tools: Vec<f64> = requests.iter().map(|request| request.tool_ms).collect();
+    let post_processes: Vec<f64> = requests
+        .iter()
+        .map(|request| request.post_process_ms)
+        .collect();
     let networks: Vec<f64> = requests.iter().map(|request| request.network_ms).collect();
     let requests_count = requests.len() as u64;
     let successes = requests.iter().filter(|request| request.success).count() as u64;
@@ -300,6 +502,10 @@ fn summarize(requests: &[CompletedRequest]) -> SummaryMetrics {
         },
         avg_latency_ms: average(&latencies),
         avg_wait_ms: average(&waits),
+        avg_stream_ms: average(&streams),
+        avg_reasoning_ms: average(&reasonings),
+        avg_tool_ms: average(&tools),
+        avg_post_process_ms: average(&post_processes),
         avg_network_ms: average(&networks),
         p95_latency_ms: percentile(&latencies, 0.95),
     }
@@ -320,6 +526,13 @@ fn summarize_models(requests: &[CompletedRequest]) -> Vec<ModelMetrics> {
         .map(|(key, items)| {
             let latencies: Vec<f64> = items.iter().map(|request| request.latency_ms).collect();
             let waits: Vec<f64> = items.iter().map(|request| request.wait_ms).collect();
+            let streams: Vec<f64> = items.iter().map(|request| request.stream_ms).collect();
+            let reasonings: Vec<f64> = items.iter().map(|request| request.reasoning_ms).collect();
+            let tools: Vec<f64> = items.iter().map(|request| request.tool_ms).collect();
+            let post_processes: Vec<f64> = items
+                .iter()
+                .map(|request| request.post_process_ms)
+                .collect();
             let networks: Vec<f64> = items.iter().map(|request| request.network_ms).collect();
             let requests_count = items.len() as u64;
             let successes = items.iter().filter(|request| request.success).count() as u64;
@@ -354,6 +567,10 @@ fn summarize_models(requests: &[CompletedRequest]) -> Vec<ModelMetrics> {
                 },
                 avg_latency_ms: average(&latencies),
                 avg_wait_ms: average(&waits),
+                avg_stream_ms: average(&streams),
+                avg_reasoning_ms: average(&reasonings),
+                avg_tool_ms: average(&tools),
+                avg_post_process_ms: average(&post_processes),
                 avg_network_ms: average(&networks),
                 p95_latency_ms: percentile(&latencies, 0.95),
             }
@@ -379,7 +596,12 @@ fn summarize_recent(requests: &[CompletedRequest]) -> Vec<RecentRequest> {
             model_id: request.model_id.clone(),
             finished_at: request.finished_at,
             success: request.success,
+            error_type: request.error_type.clone(),
             wait_ms: request.wait_ms,
+            stream_ms: request.stream_ms,
+            reasoning_ms: request.reasoning_ms,
+            tool_ms: request.tool_ms,
+            post_process_ms: request.post_process_ms,
             network_ms: request.network_ms,
             latency_ms: request.latency_ms,
             retries: request.retries,
@@ -390,6 +612,40 @@ fn summarize_recent(requests: &[CompletedRequest]) -> Vec<RecentRequest> {
     recent.sort_by(|left, right| right.finished_at.cmp(&left.finished_at));
     recent.truncate(10);
     recent
+}
+
+fn summarize_failures(requests: &[CompletedRequest]) -> Vec<FailureBreakdown> {
+    let mut grouped: HashMap<String, u64> = HashMap::new();
+
+    for request in requests.iter().filter(|request| !request.success) {
+        let key = request
+            .error_type
+            .clone()
+            .unwrap_or_else(|| "unknown_error".to_string());
+        *grouped.entry(key).or_insert(0) += 1;
+    }
+
+    let total: u64 = grouped.values().sum();
+    let mut items: Vec<FailureBreakdown> = grouped
+        .into_iter()
+        .map(|(error_type, count)| FailureBreakdown {
+            error_type,
+            count,
+            share: if total == 0 {
+                0.0
+            } else {
+                count as f64 * 100.0 / total as f64
+            },
+        })
+        .collect();
+
+    items.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.error_type.cmp(&right.error_type))
+    });
+    items
 }
 
 #[tauri::command]
@@ -421,7 +677,9 @@ fn snapshot(query: Option<SnapshotQuery>) -> DashboardSnapshot {
         filter_value: query.value.filter(|value| !value.is_empty()),
         session_options: build_session_options(&records),
         model_options: build_model_options(&records),
+        failure_options: build_failure_options(&records),
         summary: summarize(&requests),
+        failure_breakdown: summarize_failures(&requests),
         models: summarize_models(&requests),
         recent: summarize_recent(&requests),
     }

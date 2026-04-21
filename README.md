@@ -4,14 +4,26 @@ OpenCode telemetry plugin plus a Tauri floating panel.
 
 中文文档: [README_CN.md](./README_CN.md)
 
-![OpenCode Telemetry Panel home](./PixPin_2026-04-17_12-24-34.png)
-![OpenCode Telemetry Panel example1](./Weixin%20Image_20260417142221_3069_1358.png)
+![OpenCode Telemetry Panel home](./v0.1.2.1.png)
+![OpenCode Telemetry Panel example1](./v0.1.2.png)
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
 ## latest version: 
-- v0.1.1
+- v0.1.2
 
 ## Changelog
+
+Core changes from `v0.1.1` to `v0.1.2`:
+
+- Added finer-grained latency metrics for wait, text stream, reasoning, tool execution, and post-processing across the summary, model, and recent-request views.
+- Added failure-type classification, a failure breakdown panel, and a failure filter scope to make error analysis faster.
+- Expanded the recent-request cards and model cards so the new metrics stay visible in the main dashboard.
+
+Core changes from `v0.0.8` to `v0.1.1`:
+
+- `v0.0.9`: Reworked telemetry metrics to use first-output timing and avoid duplicate completions, added tutorial/onboarding docs plus screenshots, and fixed the initial filter interaction bug.
+- `v0.1.0`: Fixed the filter-change bug so scope switches keep the selected value and snapshot data aligned.
+- `v0.1.1`: Refined the floating panel CSS and copy for a cleaner, more polished UI.
 
 Core changes from `v0.0.7` to `72761b9` (`v0.0.8`):
 
@@ -40,7 +52,7 @@ Add the published npm package to your global or project OpenCode config:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.0.8"]
+  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.2"]
 }
 ```
 

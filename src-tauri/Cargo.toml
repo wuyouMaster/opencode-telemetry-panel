@@ -1,6 +1,6 @@
 [package]
 name = "opencode-telemetry-panel"
-version = "0.1.1"
+version = "0.1.2"
 description = "Floating telemetry panel for OpenCode"
 authors = ["Anomaly Innovations"]
 edition = "2024"
