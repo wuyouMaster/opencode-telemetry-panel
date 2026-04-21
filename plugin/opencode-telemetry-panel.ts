@@ -7,9 +7,27 @@ type SessionStatusEvent = {
   type: "session.status"
   properties: {
     sessionID: string
-    status: {
-      type: string
-    }
+    status:
+      | {
+          type: "idle"
+        }
+      | {
+          type: "busy"
+        }
+      | {
+          type: "retry"
+          attempt: number
+          message: string
+          next: number
+        }
+  }
+}
+
+type SessionErrorEvent = {
+  type: "session.error"
+  properties: {
+    sessionID?: string
+    error?: unknown
   }
 }
 
@@ -23,6 +41,7 @@ type MessageUpdatedEvent = {
       providerID: string
       modelID: string
       summary?: boolean
+      error?: unknown
       time: {
         created: number
         completed?: number | null
@@ -37,9 +56,22 @@ type MessagePartUpdatedEvent = {
   properties: {
     sessionID: string
     part: {
+      id: string
       sessionID: string
       messageID: string
       type: string
+      text?: string
+      synthetic?: boolean
+      ignored?: boolean
+      tool?: string
+      state?: {
+        status?: string
+        error?: unknown
+        time?: {
+          start?: number
+          end?: number
+        }
+      }
       time?: {
         start?: number
         end?: number
@@ -49,7 +81,7 @@ type MessagePartUpdatedEvent = {
   }
 }
 
-type TelemetryEvent = SessionStatusEvent | MessagePartUpdatedEvent | MessageUpdatedEvent
+type TelemetryEvent = SessionStatusEvent | SessionErrorEvent | MessagePartUpdatedEvent | MessageUpdatedEvent
 
 type Plugin = () => Promise<{
   event: (input: { event: TelemetryEvent }) => Promise<void>
@@ -63,16 +95,60 @@ type PendingRequest = {
   startedAt: number
   firstOutputAt?: number
   retries: number
+  streamMs: number
+  reasoningMs: number
+  toolMs: number
+  postProcessMs: number
+  messageError?: string
+  legacyMessageError?: string
+  sessionError?: string
+  toolError?: string
+  toolErrorCount: number
+  textPreview?: string
+}
+
+type ToolErrorSignal = {
+  error: string
+  count: number
+}
+
+type RequestOutcome = {
+  success: boolean
+  error?: string
+  errorType?: "message_error" | "session_error" | "tool_error" | "business_error"
+}
+
+type TextPreviewSignal = {
+  text: string
+  at: number
+}
+
+type TimingSignal = {
+  firstOutputAt?: number
+  streamMs: number
+  reasoningMs: number
+  toolMs: number
+}
+
+type TrackedPartTiming = {
+  kind: "stream" | "reasoning" | "tool"
+  start?: number
+  counted: boolean
 }
 
 const root = join(homedir(), ".opencode-telemetry")
 const file = join(root, "telemetry.jsonl")
+const BUSINESS_ERROR_PREVIEW_LIMIT = 120
 const executablePath = join(
   root,
   process.platform === "win32" ? "OpenCodeTelemetryPanel.exe" : "OpenCodeTelemetryPanel",
 )
 const packagePath = new URL("../package.json", import.meta.url)
 const pending = new Map<string, PendingRequest>()
+const pendingToolErrors = new Map<string, ToolErrorSignal>()
+const pendingTextPreviews = new Map<string, TextPreviewSignal>()
+const pendingTimingSignals = new Map<string, TimingSignal>()
+const trackedPartTimings = new Map<string, TrackedPartTiming>()
 const completedRequests = new Set<string>()
 let binaryReady: Promise<void> | undefined
 let panelLaunched = false
@@ -81,13 +157,220 @@ function key(sessionId: string, messageId: string) {
   return `${sessionId}:${messageId}`
 }
 
-function compactError(error: unknown) {
-  if (!error) return "session error"
-  if (typeof error !== "object") return String(error)
+function compactError(error: unknown, fallback = "session error") {
+  if (!error) return fallback
+  if (typeof error !== "object") return String(error).trim() || fallback
   if ("data" in error && error.data && typeof error.data === "object" && "message" in error.data) {
-    return String((error.data as { message?: unknown }).message ?? (error as { message?: unknown }).message ?? "")
+    const message = String((error.data as { message?: unknown }).message ?? "").trim()
+    return message || fallback
   }
-  return String((error as { message?: unknown }).message ?? error)
+  const message = String((error as { message?: unknown }).message ?? "").trim()
+  return message || fallback
+}
+
+function normalizeTextPreview(text: string) {
+  return text.replace(/\s+/g, " ").trim()
+}
+
+function normalizeBusinessCandidate(text: string) {
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[`"'“”‘’]+/, "")
+    .replace(/[`"'“”‘’]+$/, "")
+    .replace(/[:.?!-]+$/, "")
+    .trim()
+}
+
+function tail(value: string, limit: number) {
+  return value.length <= limit ? value : value.slice(-limit)
+}
+
+function attachSessionError(sessionId: string, error: string) {
+  for (const request of pending.values()) {
+    if (request.sessionId === sessionId) request.sessionError = error
+  }
+}
+
+function partTimingKey(requestKey: string, partID: string) {
+  return `${requestKey}:${partID}`
+}
+
+function applyTimingSignal(request: PendingRequest, signal: TimingSignal) {
+  if (signal.firstOutputAt !== undefined) {
+    request.firstOutputAt =
+      request.firstOutputAt === undefined ? signal.firstOutputAt : Math.min(request.firstOutputAt, signal.firstOutputAt)
+  }
+  request.streamMs += signal.streamMs
+  request.reasoningMs += signal.reasoningMs
+  request.toolMs += signal.toolMs
+}
+
+function queueTimingSignal(requestKey: string, signal: TimingSignal) {
+  const existing = pendingTimingSignals.get(requestKey)
+  if (!existing) {
+    pendingTimingSignals.set(requestKey, { ...signal })
+    return
+  }
+
+  existing.streamMs += signal.streamMs
+  existing.reasoningMs += signal.reasoningMs
+  existing.toolMs += signal.toolMs
+  if (signal.firstOutputAt !== undefined) {
+    existing.firstOutputAt =
+      existing.firstOutputAt === undefined ? signal.firstOutputAt : Math.min(existing.firstOutputAt, signal.firstOutputAt)
+  }
+}
+
+function drainTimingSignal(requestKey: string, request: PendingRequest) {
+  const signal = pendingTimingSignals.get(requestKey)
+  if (!signal) return
+
+  applyTimingSignal(request, signal)
+  pendingTimingSignals.delete(requestKey)
+}
+
+function clearRequestState(requestKey: string) {
+  pending.delete(requestKey)
+  pendingToolErrors.delete(requestKey)
+  pendingTextPreviews.delete(requestKey)
+  pendingTimingSignals.delete(requestKey)
+
+  for (const key of trackedPartTimings.keys()) {
+    if (key.startsWith(`${requestKey}:`)) trackedPartTimings.delete(key)
+  }
+}
+
+function applyToolErrorSignal(request: PendingRequest, signal: ToolErrorSignal) {
+  request.toolError ??= signal.error
+  request.toolErrorCount += signal.count
+}
+
+function queueToolErrorSignal(requestKey: string, error: unknown, toolName?: string) {
+  const existing = pendingToolErrors.get(requestKey)
+  if (existing) {
+    existing.count += 1
+    return existing
+  }
+
+  const signal = {
+    error: compactError(error, toolName ? `${toolName} error` : "tool error"),
+    count: 1,
+  }
+  pendingToolErrors.set(requestKey, signal)
+  return signal
+}
+
+function drainToolErrorSignal(requestKey: string, request: PendingRequest) {
+  const signal = pendingToolErrors.get(requestKey)
+  if (!signal) return
+
+  applyToolErrorSignal(request, signal)
+  pendingToolErrors.delete(requestKey)
+}
+
+function queueTextPreviewSignal(requestKey: string, text: unknown, at: number) {
+  if (typeof text !== "string") return
+
+  const preview = tail(normalizeTextPreview(text), BUSINESS_ERROR_PREVIEW_LIMIT)
+  if (!preview) return
+
+  const existing = pendingTextPreviews.get(requestKey)
+  if (!existing || at >= existing.at) pendingTextPreviews.set(requestKey, { text: preview, at })
+}
+
+function drainTextPreviewSignal(requestKey: string, request: PendingRequest) {
+  const signal = pendingTextPreviews.get(requestKey)
+  if (!signal) return
+
+  request.textPreview = signal.text
+  pendingTextPreviews.delete(requestKey)
+}
+
+function trackPartTiming(
+  requestKey: string,
+  partID: string,
+  kind: "stream" | "reasoning" | "tool",
+  start?: number,
+  end?: number,
+  firstOutputAt?: number,
+) {
+  const key = partTimingKey(requestKey, partID)
+  const current = trackedPartTimings.get(key) ?? { kind, counted: false }
+  current.kind = kind
+  if (start !== undefined) current.start = current.start === undefined ? start : Math.min(current.start, start)
+  if (firstOutputAt !== undefined) queueTimingSignal(requestKey, { firstOutputAt, streamMs: 0, reasoningMs: 0, toolMs: 0 })
+
+  if (end === undefined || current.counted) {
+    trackedPartTimings.set(key, current)
+    return
+  }
+
+  const effectiveStart = current.start ?? start ?? end
+  const duration = Math.max(0, end - effectiveStart)
+  queueTimingSignal(
+    requestKey,
+    kind === "stream"
+      ? { streamMs: duration, reasoningMs: 0, toolMs: 0 }
+      : kind === "reasoning"
+        ? { streamMs: 0, reasoningMs: duration, toolMs: 0 }
+        : { streamMs: 0, reasoningMs: 0, toolMs: duration },
+  )
+  current.counted = true
+  trackedPartTimings.delete(key)
+}
+
+function resolveBusinessError(textPreview?: string) {
+  if (!textPreview) return undefined
+
+  const candidate = normalizeBusinessCandidate(textPreview)
+  if (!candidate || candidate.length > BUSINESS_ERROR_PREVIEW_LIMIT) return undefined
+
+  const patterns = [
+    /^(?:error[:\s-]*)?(?:http\s*)?404(?:\s+not found)?$/,
+    /^(?:error[:\s-]*)?not found$/,
+    /^(?:error[:\s-]*)?resource not found$/,
+    /^(?:error[:\s-]*)?endpoint not found$/,
+    /^(?:error[:\s-]*)?page not found$/,
+    /^(?:error[:\s-]*)?file not found$/,
+    /^(?:error[:\s-]*)?request failed$/,
+    /^(?:error[:\s-]*)?failed to fetch$/,
+    /^(?:error[:\s-]*)?bad request$/,
+    /^(?:error[:\s-]*)?unauthorized$/,
+    /^(?:error[:\s-]*)?forbidden$/,
+    /^(?:error[:\s-]*)?internal server error$/,
+    /^(?:error[:\s-]*)?service unavailable$/,
+    /^(?:error[:\s-]*)?gateway timeout$/,
+    /^(?:error[:\s-]*)?rate limited$/,
+    /^(?:error[:\s-]*)?rate limit exceeded$/,
+  ]
+
+  return patterns.some((pattern) => pattern.test(candidate.toLowerCase())) ? candidate : undefined
+}
+
+function resolveRequestOutcome(pendingRequest: PendingRequest): RequestOutcome {
+  if (pendingRequest.messageError) {
+    return { success: false, error: pendingRequest.messageError, errorType: "message_error" }
+  }
+
+  if (pendingRequest.legacyMessageError) {
+    return { success: false, error: pendingRequest.legacyMessageError, errorType: "message_error" }
+  }
+
+  if (pendingRequest.sessionError) {
+    return { success: false, error: pendingRequest.sessionError, errorType: "session_error" }
+  }
+
+  if (pendingRequest.toolError) {
+    return { success: false, error: pendingRequest.toolError, errorType: "tool_error" }
+  }
+
+  const businessError = resolveBusinessError(pendingRequest.textPreview)
+  if (businessError) {
+    return { success: false, error: businessError, errorType: "business_error" }
+  }
+
+  return { success: true }
 }
 
 async function append(record: Record<string, unknown>) {
@@ -161,8 +444,16 @@ function launchPanel() {
   panelLaunched = true
 }
 
-function recordFromPending(pendingRequest: PendingRequest, finishedAt: number, success: boolean, error?: string) {
+function recordFromPending(pendingRequest: PendingRequest, finishedAt: number) {
   const firstOutputAt = pendingRequest.firstOutputAt ?? finishedAt
+  const waitMs = Math.max(0, firstOutputAt - pendingRequest.startedAt)
+  const totalMs = Math.max(0, finishedAt - pendingRequest.startedAt)
+  const postProcessMs = Math.max(
+    0,
+    totalMs - waitMs - pendingRequest.streamMs - pendingRequest.reasoningMs - pendingRequest.toolMs,
+  )
+  pendingRequest.postProcessMs = postProcessMs
+  const outcome = resolveRequestOutcome(pendingRequest)
   return {
     kind: "request",
     sessionId: pendingRequest.sessionId,
@@ -172,8 +463,13 @@ function recordFromPending(pendingRequest: PendingRequest, finishedAt: number, s
     startedAt: pendingRequest.startedAt,
     firstOutputAt,
     completedAt: finishedAt,
-    success,
-    error: error ?? null,
+    streamMs: pendingRequest.streamMs,
+    reasoningMs: pendingRequest.reasoningMs,
+    toolMs: pendingRequest.toolMs,
+    postProcessMs,
+    success: outcome.success,
+    error: outcome.error ?? null,
+    errorType: outcome.errorType ?? null,
     retries: pendingRequest.retries,
   }
 }
@@ -194,19 +490,73 @@ export const TelemetryPanelPlugin: Plugin = async () => {
         return
       }
 
+      if (event.type === "session.error") {
+        if (!event.properties.sessionID) return
+        attachSessionError(event.properties.sessionID, compactError(event.properties.error, "session error"))
+        return
+      }
+
       if (event.type === "message.part.updated") {
-        if (event.properties.part.type !== "text") return
         const requestKey = key(event.properties.sessionID, event.properties.part.messageID)
-        const request = pending.get(requestKey)
-        if (request && request.firstOutputAt === undefined)
-          request.firstOutputAt = event.properties.part.time?.start ?? event.properties.time
+
+        if (event.properties.part.type === "text") {
+          if (event.properties.part.synthetic || event.properties.part.ignored) return
+
+          queueTextPreviewSignal(requestKey, event.properties.part.text, event.properties.time)
+          trackPartTiming(
+            requestKey,
+            event.properties.part.id,
+            "stream",
+            event.properties.part.time?.start ?? event.properties.time,
+            event.properties.part.time?.end,
+            event.properties.part.time?.start ?? event.properties.time,
+          )
+          return
+        }
+
+        if (event.properties.part.type === "reasoning") {
+          trackPartTiming(
+            requestKey,
+            event.properties.part.id,
+            "reasoning",
+            event.properties.part.time?.start,
+            event.properties.part.time?.end,
+            event.properties.part.time?.start,
+          )
+          return
+        }
+
+        if (event.properties.part.type !== "tool") return
+
+        const toolState = event.properties.part.state
+        const toolStart = toolState?.time?.start
+        const toolEnd = toolState?.time?.end
+
+        if (toolState?.status === "error") {
+          const request = pending.get(requestKey)
+          if (!request) {
+            queueToolErrorSignal(requestKey, toolState.error, event.properties.part.tool)
+          } else {
+            drainToolErrorSignal(requestKey, request)
+            applyToolErrorSignal(request, {
+              error: compactError(
+                toolState.error,
+                event.properties.part.tool ? `${event.properties.part.tool} error` : "tool error",
+              ),
+              count: 1,
+            })
+          }
+        }
+
+        trackPartTiming(requestKey, event.properties.part.id, "tool", toolStart, toolEnd, toolStart)
         return
       }
 
       if (event.type === "message.updated") {
         if (event.properties.info.role !== "assistant") return
         if (event.properties.info.summary) {
-          pending.delete(key(event.properties.sessionID, event.properties.info.id))
+          const requestKey = key(event.properties.sessionID, event.properties.info.id)
+          clearRequestState(requestKey)
           return
         }
 
@@ -221,26 +571,32 @@ export const TelemetryPanelPlugin: Plugin = async () => {
             modelId: event.properties.info.modelID,
             startedAt: event.properties.info.time.created,
             retries: 0,
+            streamMs: 0,
+            reasoningMs: 0,
+            toolMs: 0,
+            postProcessMs: 0,
+            toolErrorCount: 0,
           } satisfies PendingRequest)
 
         next.startedAt = Math.min(next.startedAt, event.properties.info.time.created)
         next.providerId = event.properties.info.providerID
         next.modelId = event.properties.info.modelID
+        if (event.properties.info.error) {
+          next.messageError = compactError(event.properties.info.error, "message error")
+        } else if (event.properties.info.time.error) {
+          next.legacyMessageError = compactError(event.properties.info.time.error, "message error")
+        }
+        drainToolErrorSignal(requestKey, next)
+        drainTimingSignal(requestKey, next)
+        drainTextPreviewSignal(requestKey, next)
         if (!existing) pending.set(requestKey, next)
 
-        if (!event.properties.info.time.completed) return
+        if (event.properties.info.time.completed == null) return
         if (completedRequests.has(requestKey)) return
 
-        await append(
-          recordFromPending(
-            next,
-            event.properties.info.time.completed,
-            !event.properties.info.time.error,
-            event.properties.info.time.error ? compactError(event.properties.info.time.error) : undefined,
-          ),
-        ).catch(() => undefined)
+        await append(recordFromPending(next, event.properties.info.time.completed)).catch(() => undefined)
         completedRequests.add(requestKey)
-        pending.delete(requestKey)
+        clearRequestState(requestKey)
       }
     },
   }
