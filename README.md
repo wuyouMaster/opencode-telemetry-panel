@@ -9,7 +9,7 @@ OpenCode telemetry plugin plus a Tauri floating panel.
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
 ## latest version: 
-- v0.1.2
+- v0.1.3
 
 ## Changelog
 
@@ -52,7 +52,7 @@ Add the published npm package to your global or project OpenCode config:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.2"]
+  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.3"]
 }
 ```
 

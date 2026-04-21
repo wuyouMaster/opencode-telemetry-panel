@@ -9,7 +9,7 @@ English: [README.md](./README.md)
 ![OpenCode Telemetry Panel example2](./Weixin%20Image_20260417142221_3070_1358.png)
 
 ## latest version: 
-- v0.1.2
+- v0.1.3
 
 ## Change Log
 
@@ -52,7 +52,7 @@ English: [README.md](./README.md)
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.2"]
+  "plugin": ["@wuyoumaster/opencode-telemetry-panel@0.1.3"]
 }
 ```
 
